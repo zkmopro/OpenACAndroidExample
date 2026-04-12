@@ -13,10 +13,10 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-// import uniffi.mopro.generateInput
-import uniffi.mopro.prove
-import uniffi.mopro.setupKeys
-import uniffi.mopro.verify
+ import uniffi.mopro.generateInputFido
+import uniffi.mopro.proveFido
+import uniffi.mopro.setupKeysFido
+import uniffi.mopro.verifyFido
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
@@ -70,6 +70,7 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
     var athResponseString:   String?    by mutableStateOf(null);             private set
     var athIssuerCert:       String?    by mutableStateOf(null);             private set
     var generateInputStatus: StepStatus by mutableStateOf(StepStatus.Idle); private set
+    var fidoInputJson:       String?    by mutableStateOf(null);             private set
 
     // MARK: - Paths
 
@@ -78,6 +79,7 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
 
     val documentsPath: String get() = workDir.absolutePath
     val inputPath:     String get() = File(workDir, "input.json").absolutePath
+    val fidoInputPath: String get() = File(workDir, "fido_input.json").absolutePath
 
     init {
         checkCircuitReady()
@@ -93,14 +95,13 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val app = getApplication<Application>()
             workDir.mkdirs()
-            // Copy input.json from assets on first launch
+            // Always overwrite input.json from assets for a clean slate
             val inputDst = File(workDir, "input.json")
-            if (!inputDst.exists()) {
-                try {
-                    app.assets.open("input.json")
-                        .use { src -> inputDst.outputStream().use { src.copyTo(it) } }
-                } catch (_: Exception) {}
-            }
+            try {
+                inputDst.delete()
+                app.assets.open("input.json")
+                    .use { src -> inputDst.outputStream().use { src.copyTo(it) } }
+            } catch (_: Exception) {}
             // Copy MOICA-G3.cer from assets if not present
             val certDst = File(workDir, "MOICA-G3.cer")
             if (!certDst.exists()) {
@@ -267,6 +268,7 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
 
     fun reset() {
         generateInputStatus = StepStatus.Idle
+        fidoInputJson       = null
         setupStatus         = StepStatus.Idle
         proveStatus         = StepStatus.Idle
         verifyStatus        = StepStatus.Idle
@@ -296,20 +298,23 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
             val tbs            = "e775f2805fb993e05a208dbff15d1c1"
-            val outPath        = File(workDir, "input.json").absolutePath
+            val outPath        = fidoInputPath
             val issuerCertPath = File(workDir, "MOICA-G3.cer").absolutePath
             try {
                 withContext(Dispatchers.Default) {
-                    // generateInput(
-                    //     certb64        = certb64,
-                    //     signedResponse = signedResponse,
-                    //     tbs            = tbs,
-                    //     issuerCertPath = issuerCertPath,
-                    //     smtServer      = null,
-                    //     issuerId       = "g2",
-                    //     outputPath     = outPath,
-                    // )
+                    generateInputFido(
+                        certb64        = certb64,
+                        signedResponse = signedResponse,
+                        tbs            = tbs,
+                        issuerCertPath = issuerCertPath,
+                        smtServer      = null,
+                        issuerId       = "g2",
+                        outputPath     = outPath,
+                    )
                 }
+                val inputJson = File(outPath).readText()
+                println("fido_input.json: $inputJson")
+                fidoInputJson       = inputJson
                 generateInputStatus = StepStatus.Success(outPath)
             } catch (e: Exception) {
                 generateInputStatus = StepStatus.Failure(e.message ?: "unknown error")
@@ -323,10 +328,10 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun doSetupKeys() {
         setupStatus = StepStatus.Running
-        val dp = documentsPath; val ip = inputPath
+        val dp = documentsPath; val ip = fidoInputPath
         try {
             val msg = withContext(Dispatchers.Default) {
-                setupKeys(documentsPath = dp, inputPath = ip)
+                setupKeysFido(documentsPath = dp, inputPath = ip)
             }
             setupStatus = StepStatus.Success(msg)
         } catch (e: Exception) {
@@ -336,10 +341,10 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun doProve() {
         proveStatus = StepStatus.Running
-        val dp = documentsPath; val ip = inputPath
+        val dp = documentsPath; val ip = fidoInputPath
         try {
             val result = withContext(Dispatchers.Default) {
-                prove(documentsPath = dp, inputPath = ip)
+                proveFido(documentsPath = dp, inputPath = ip)
             }
             proveStatus = StepStatus.Success("${result.proveMs} ms · ${result.proofSizeBytes} B")
         } catch (e: Exception) {
@@ -351,7 +356,7 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
         verifyStatus = StepStatus.Running
         val dp = documentsPath
         try {
-            val valid = withContext(Dispatchers.Default) { verify(documentsPath = dp) }
+            val valid = withContext(Dispatchers.Default) { verifyFido(documentsPath = dp) }
             verifyStatus = if (valid)
                 StepStatus.Success("Proof is valid")
             else

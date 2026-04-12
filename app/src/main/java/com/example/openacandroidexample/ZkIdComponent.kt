@@ -1,6 +1,7 @@
 package com.example.openacandroidexample
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -14,12 +15,22 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -31,7 +42,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -78,6 +91,11 @@ fun ZkIdComponent(vm: ProofViewModel = viewModel()) {
         // ── MOICA Section ────────────────────────────────────────
         AnimatedVisibility(visible = vm.circuitReady) {
             MoicaCard(vm = vm, isBusy = isBusy)
+        }
+
+        // ── fido_input.json viewer ───────────────────────────────
+        AnimatedVisibility(visible = vm.fidoInputJson != null) {
+            FidoInputCard(json = vm.fidoInputJson ?: "")
         }
 
         // ── ZK Pipeline ──────────────────────────────────────────
@@ -169,6 +187,69 @@ private fun CircuitDownloadCard(vm: ProofViewModel) {
                     onClick  = { vm.downloadCircuit() },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text("Download Circuit") }
+            }
+        }
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// fido_input.json Card
+// ─────────────────────────────────────────────────────────────────────────────
+
+@Composable
+private fun FidoInputCard(json: String) {
+    val clipboard         = LocalClipboardManager.current
+    val hScroll           = rememberScrollState()
+    var expanded by remember { mutableStateOf(false) }
+
+    ElevatedCard(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            // Header row: title + expand toggle + copy button
+            Row(
+                modifier              = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment     = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "fido_input.json",
+                    style      = MaterialTheme.typography.labelLarge,
+                    color      = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Row {
+                    IconButton(onClick = { expanded = !expanded }) {
+                        Icon(
+                            imageVector        = if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                            contentDescription = if (expanded) "Collapse" else "Expand",
+                            tint               = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier           = Modifier.size(20.dp),
+                        )
+                    }
+                    IconButton(onClick = { clipboard.setText(AnnotatedString(json)) }) {
+                        Icon(
+                            imageVector        = Icons.Filled.ContentCopy,
+                            contentDescription = "Copy to clipboard",
+                            tint               = MaterialTheme.colorScheme.primary,
+                            modifier           = Modifier.size(20.dp),
+                        )
+                    }
+                }
+            }
+
+            // JSON content — only visible when expanded
+            AnimatedVisibility(visible = expanded) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    HorizontalDivider()
+                    Text(
+                        text       = json,
+                        style      = MaterialTheme.typography.bodySmall,
+                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        modifier   = Modifier.horizontalScroll(hScroll),
+                    )
+                }
             }
         }
     }
