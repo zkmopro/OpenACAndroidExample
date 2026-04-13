@@ -1,6 +1,7 @@
 package com.example.openacandroidexample
 
 import android.content.Context
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,6 +15,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.viewmodel.compose.viewModel
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -70,16 +72,34 @@ suspend fun downloadAndUnzipToFilesDir(context: Context, zipUrl: String, targetF
     }
 
 class MainActivity : ComponentActivity() {
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MainScreen()
+            val vm: ProofViewModel = viewModel()
+
+            // Handle cold-start: app launched directly by the MOICA callback URL.
+            LaunchedEffect(Unit) {
+                intent?.data?.let { vm.handleCallback(it) }
+            }
+
+            // Handle warm-start: activity already running (singleTop) when MOICA redirects back.
+            DisposableEffect(vm) {
+                val listener = { newIntent: Intent ->
+                    newIntent.data?.let { vm.handleCallback(it) }
+                    Unit
+                }
+                addOnNewIntentListener(listener)
+                onDispose { removeOnNewIntentListener(listener) }
+            }
+
+            MainScreen(vm = vm)
         }
     }
 }
 
 @Composable
-fun MainScreen() {
+fun MainScreen(vm: ProofViewModel = viewModel()) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("zkID")
 
@@ -99,7 +119,7 @@ fun MainScreen() {
             }
             Spacer(modifier = Modifier.height(16.dp))
             when (selectedTab) {
-                else -> ZkIdComponent()
+                else -> ZkIdComponent(vm = vm)
             }
         }
     }
