@@ -13,9 +13,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
- import uniffi.mopro.generateInputFido
+import uniffi.mopro.generateInputFido
 import uniffi.mopro.proveFido
-import uniffi.mopro.setupKeysFido
 import uniffi.mopro.verifyFido
 import java.io.File
 import java.net.HttpURLConnection
@@ -26,6 +25,13 @@ import java.util.zip.ZipInputStream
 private const val CIRCUIT_ZIP_URL =
     "https://pub-ef10768896384fdf9617f26d43e11a65.r2.dev/sha256rsa4096.r1cs.zip"
 private const val CIRCUIT_FILENAME = "sha256rsa4096.r1cs"
+
+private const val PROVING_KEY_URL =
+    "https://github.com/zkmopro/zkID/releases/latest/download/rs256_4096_proving.key.zip"
+private const val VERIFYING_KEY_URL =
+    "https://github.com/zkmopro/zkID/releases/latest/download/rs256_4096_verifying.key.zip"
+private const val PROVING_KEY_FILENAME  = "rs256_4096_proving.key"
+private const val VERIFYING_KEY_FILENAME = "rs256_4096_verifying.key"
 
 const val RETURN_SCHEME = "openac"
 const val RETURN_URL    = "$RETURN_SCHEME://callback"
@@ -56,13 +62,16 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
     var circuitReady:      Boolean  by mutableStateOf(false); private set
     var isDownloading:     Boolean  by mutableStateOf(false); private set
     var downloadProgress:  Double   by mutableStateOf(0.0);   private set
+    var downloadPhase:     String?  by mutableStateOf(null);  private set
     var downloadError:     String?  by mutableStateOf(null);  private set
     var downloadSeconds:   Double?  by mutableStateOf(null);  private set
     var unzipSeconds:      Double?  by mutableStateOf(null);  private set
 
+    val assetsReady: Boolean get() = circuitReady && keysReady
+
     // MARK: - SP Ticket / MOICA
 
-    var idNum:               String     by mutableStateOf("A123456789")
+    var idNum:               String     by mutableStateOf("F228818311")
     var spTicketStatus:      StepStatus by mutableStateOf(StepStatus.Idle); private set
     var spTicket:            String?    by mutableStateOf(null);             private set
     var rtnVal:              String?    by mutableStateOf(null);             private set
@@ -78,15 +87,23 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
         get() = File(getApplication<Application>().filesDir, "ZKVectors")
 
     val documentsPath: String get() = workDir.absolutePath
+    val keysDir:       File   get() = File(workDir, "keys")
     val inputPath:     String get() = File(workDir, "input.json").absolutePath
     val fidoInputPath: String get() = File(workDir, "fido_input.json").absolutePath
 
+    var keysReady: Boolean by mutableStateOf(false); private set
+
     init {
         checkCircuitReady()
+        checkKeysReady()
     }
 
     private fun checkCircuitReady() {
         circuitReady = File(workDir, CIRCUIT_FILENAME).exists()
+    }
+
+    private fun checkKeysReady() {
+        keysReady = File(keysDir, PROVING_KEY_FILENAME).exists()
     }
 
     // MARK: - Resource Setup
@@ -111,6 +128,7 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (_: Exception) {}
             }
             checkCircuitReady()
+            checkKeysReady()
         }
     }
 
@@ -121,26 +139,38 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             isDownloading    = true
             downloadProgress = 0.0
+            downloadPhase    = null
             downloadError    = null
             downloadSeconds  = null
             unzipSeconds     = null
 
-            val tmpZip = File(getApplication<Application>().cacheDir, "sha256rsa4096.r1cs.zip")
             try {
+                // 1. Download circuit
+                val circuitZip = File(getApplication<Application>().cacheDir, "sha256rsa4096.r1cs.zip")
                 val t0 = System.currentTimeMillis()
-                downloadWithProgress(CIRCUIT_ZIP_URL, tmpZip) { downloadProgress = it }
+                downloadPhase = CIRCUIT_FILENAME
+                downloadWithProgress(CIRCUIT_ZIP_URL, circuitZip) { downloadProgress = it }
                 downloadSeconds = (System.currentTimeMillis() - t0) / 1000.0
-
                 val t1 = System.currentTimeMillis()
-                unzipFile(tmpZip, workDir)
-                tmpZip.delete()
+                unzipFile(circuitZip, workDir)
+                circuitZip.delete()
                 unzipSeconds = (System.currentTimeMillis() - t1) / 1000.0
-
                 checkCircuitReady()
+
+                // 2. Download proving key
+                keysDir.mkdirs()
+                val provingZip = File(getApplication<Application>().cacheDir, "$PROVING_KEY_FILENAME.zip")
+                downloadPhase    = PROVING_KEY_FILENAME
+                downloadProgress = 0.0
+                downloadWithProgress(PROVING_KEY_URL, provingZip) { downloadProgress = it }
+                unzipFile(provingZip, keysDir)
+                provingZip.delete()
+                checkKeysReady()
             } catch (e: Exception) {
                 downloadError = e.message
             } finally {
                 isDownloading = false
+                downloadPhase = null
             }
         }
     }
@@ -313,7 +343,6 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
                 val inputJson = File(outPath).readText()
-                println("fido_input.json: $inputJson")
                 fidoInputJson       = inputJson
                 generateInputStatus = StepStatus.Success(outPath)
             } catch (e: Exception) {
@@ -327,13 +356,26 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
     fun runVerify()    { viewModelScope.launch { doVerify() } }
 
     private suspend fun doSetupKeys() {
+        if (keysReady) {
+            setupStatus = StepStatus.Success("Keys already downloaded")
+            return
+        }
         setupStatus = StepStatus.Running
-        val dp = documentsPath; val ip = fidoInputPath
         try {
-            val msg = withContext(Dispatchers.Default) {
-                setupKeysFido(documentsPath = dp, inputPath = ip)
+            withContext(Dispatchers.IO) {
+                keysDir.mkdirs()
+                for ((url, filename) in listOf(
+                    PROVING_KEY_URL  to PROVING_KEY_FILENAME,
+                    VERIFYING_KEY_URL to VERIFYING_KEY_FILENAME,
+                )) {
+                    val tmpZip = File(getApplication<Application>().cacheDir, "$filename.zip")
+                    downloadWithProgress(url, tmpZip) {}
+                    unzipFile(tmpZip, keysDir)
+                    tmpZip.delete()
+                }
             }
-            setupStatus = StepStatus.Success(msg)
+            checkKeysReady()
+            setupStatus = StepStatus.Success("Keys downloaded to ${keysDir.absolutePath}")
         } catch (e: Exception) {
             setupStatus = StepStatus.Failure(e.message ?: "unknown error")
         }
@@ -356,6 +398,16 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
         verifyStatus = StepStatus.Running
         val dp = documentsPath
         try {
+            // Download verifying key on demand if not present
+            if (!File(keysDir, VERIFYING_KEY_FILENAME).exists()) {
+                keysDir.mkdirs()
+                val tmpZip = File(getApplication<Application>().cacheDir, "$VERIFYING_KEY_FILENAME.zip")
+                withContext(Dispatchers.IO) {
+                    downloadWithProgress(VERIFYING_KEY_URL, tmpZip) {}
+                    unzipFile(tmpZip, keysDir)
+                    tmpZip.delete()
+                }
+            }
             val valid = withContext(Dispatchers.Default) { verifyFido(documentsPath = dp) }
             verifyStatus = if (valid)
                 StepStatus.Success("Proof is valid")

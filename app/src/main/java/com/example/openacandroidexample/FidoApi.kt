@@ -149,8 +149,6 @@ suspend fun getSpTicket(params: SpTicketParams): String = withContext(Dispatcher
     val payload = params.transactionID + getSpServiceID() + params.idNum +
             params.opCode + params.opMode + params.hint + params.signData
     val checksum = computeSpChecksum(payload)
-    println("checksum: $checksum")
-    println("payload: $payload")
 
     val body = JSONObject().apply {
         put("transaction_id", params.transactionID)
