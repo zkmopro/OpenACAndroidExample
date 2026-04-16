@@ -16,18 +16,28 @@ An Android example app demonstrating zero-knowledge proof generation and verific
 
 ## Overview
 
-This app uses [OpenACKotlin](https://github.com/zkmopro/OpenACKotlin) to run the FIDO zkID circuit on Android. It demonstrates a full end-to-end zero-knowledge proof workflow:
+This app uses [OpenACKotlin](https://github.com/zkmopro/OpenACKotlin) to run the FIDO zkID circuit on Android. The single **zkID** tab exposes a scrollable screen with four cards that unlock sequentially:
 
-1. **Download Circuit** — downloads and unzips `sha256rsa4096.r1cs` from a CDN at runtime, showing live download progress
-2. **MOICA Signature** — calls the MOICA FIDO API to:
-   - Get an SP ticket (`getSpTicket`)
-   - Open the MOICA mobile app for the user to sign via app-to-app flow
-   - Poll for the signed ATH result (`getAthOrSignResult`)
-3. **ZK Pipeline** — runs the four-step ZK workflow:
-   - **Generate Input** — calls `generateInputFido` to produce `fido_input.json` from the signed ATH response
-   - **Setup Keys** — generates proving and verifying keys from the circuit via `setupKeysFido`
-   - **Generate Proof** — produces a zero-knowledge proof via `proveFido`, reporting proof time and size
-   - **Verify Proof** — verifies the proof is valid via `verifyFido`
+### Circuit Download Card
+Always visible. Shows a progress bar with the current file name and live percentage while fetching. The MOICA and ZK Pipeline cards are hidden until both the circuit and proving key are ready.
+
+- **Download Circuit + Keys** — fetches and unzips `sha256rsa4096.r1cs` (circuit) and `rs256_4096_proving.key` (proving key) sequentially from their CDNs; shows download and unzip timings on completion
+
+### MOICA Signature Card *(visible after circuit + keys are ready)*
+Enter a masked **ID Number**, then follow the three numbered steps:
+
+- **1. Get SP Ticket** — calls `getSpTicket` and displays the result
+- **2. Open MOICA App** — launches the MOICA app via deep-link for the user to sign (app-to-app flow); enabled after an SP ticket is obtained
+- **3. Poll ATH Result** — calls `getAthOrSignResult` and displays the signed response and cert snippets; enabled after an SP ticket is obtained
+
+### fido_input.json Card *(visible after Generate Input completes)*
+Expandable card showing the generated circuit input JSON, with a copy-to-clipboard button.
+
+### ZK Pipeline Card *(visible after circuit + keys are ready)*
+- **4. Generate Input** — calls `generateInputFido` to produce `fido_input.json` from the ATH result; enabled after ATH polling succeeds
+- **5. Generate Proof** — calls `proveFido` and reports proof time (ms) and proof size (bytes)
+- **6. Verify Proof** — calls `verifyFido` to confirm the proof is valid; downloads the verifying key on demand if not present; enabled after prove succeeds
+- **Run All (Prove → Verify)** — convenience button that runs steps 5–6 in sequence (Generate Input must be run separately first)
 
 ## Getting Started
 
@@ -69,10 +79,10 @@ The app requires an internet connection on first launch to download the circuit 
 |---|---|
 | `MainActivity.kt` | Entry point; wires the MOICA app2app callback URI into the ViewModel |
 | `ProofViewModel.kt` | All state and business logic — download, MOICA API calls, ZK pipeline |
-| `ZkIdComponent.kt` | Compose UI — circuit download card, MOICA signature card, ZK pipeline card |
+| `ZkIdComponent.kt` | Compose UI — circuit download card, MOICA signature card, `fido_input.json` viewer card, ZK pipeline card |
 | `FidoApi.kt` | MOICA FIDO REST API client (`getSpTicket`, `getAthOrSignResult`, `pollSignResult`, `computeSpChecksum`) |
 | `Secrets.kt` | Fallback SP service credentials (git-ignored) |
 
 ## Dependencies
 
-- [OpenACKotlin](https://github.com/zkmopro/OpenACKotlin) — Kotlin bindings for the mopro ZK proving backend (`generateInputFido`, `setupKeysFido`, `proveFido`, `verifyFido`)
+- [OpenACKotlin](https://github.com/zkmopro/OpenACKotlin) — Kotlin bindings for the mopro ZK proving backend (`generateInputFido`, `proveFido`, `verifyFido`)

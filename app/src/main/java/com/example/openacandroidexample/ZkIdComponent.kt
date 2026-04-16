@@ -89,7 +89,7 @@ fun ZkIdComponent(vm: ProofViewModel = viewModel()) {
         CircuitDownloadCard(vm = vm)
 
         // ── MOICA Section ────────────────────────────────────────
-        AnimatedVisibility(visible = vm.circuitReady) {
+        AnimatedVisibility(visible = vm.assetsReady) {
             MoicaCard(vm = vm, isBusy = isBusy)
         }
 
@@ -99,7 +99,7 @@ fun ZkIdComponent(vm: ProofViewModel = viewModel()) {
         }
 
         // ── ZK Pipeline ──────────────────────────────────────────
-        AnimatedVisibility(visible = vm.circuitReady) {
+        AnimatedVisibility(visible = vm.assetsReady) {
             PipelineCard(vm = vm, isBusy = isBusy)
         }
 
@@ -118,7 +118,7 @@ private fun CircuitDownloadCard(vm: ProofViewModel) {
         colors = CardDefaults.cardColors(
             containerColor = when {
                 vm.downloadError != null -> MaterialTheme.colorScheme.errorContainer
-                vm.circuitReady         -> MaterialTheme.colorScheme.secondaryContainer
+                vm.assetsReady          -> MaterialTheme.colorScheme.secondaryContainer
                 else                    -> MaterialTheme.colorScheme.surfaceVariant
             }
         ),
@@ -129,15 +129,15 @@ private fun CircuitDownloadCard(vm: ProofViewModel) {
         ) {
             val onColor = when {
                 vm.downloadError != null -> MaterialTheme.colorScheme.onErrorContainer
-                vm.circuitReady         -> MaterialTheme.colorScheme.onSecondaryContainer
+                vm.assetsReady          -> MaterialTheme.colorScheme.onSecondaryContainer
                 else                    -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             Text(
                 text = when {
                     vm.downloadError != null -> "Download failed"
-                    vm.circuitReady         -> "Circuit ready"
-                    vm.isDownloading        -> "Downloading circuit…"
-                    else                    -> "Circuit not downloaded"
+                    vm.assetsReady          -> "Circuit + Keys ready"
+                    vm.isDownloading        -> "Downloading…"
+                    else                    -> "Circuit + Keys not downloaded"
                 },
                 style      = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold,
@@ -153,40 +153,41 @@ private fun CircuitDownloadCard(vm: ProofViewModel) {
             }
 
             if (vm.isDownloading) {
+                val phase = vm.downloadPhase ?: "…"
                 LinearProgressIndicator(
                     progress     = { vm.downloadProgress.toFloat() },
                     modifier     = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    text  = "sha256rsa4096.r1cs  ${(vm.downloadProgress * 100).toInt()}%",
+                    text  = "$phase  ${(vm.downloadProgress * 100).toInt()}%",
                     style = MaterialTheme.typography.bodySmall,
                     color = onColor,
                 )
             }
 
-            if (vm.circuitReady) {
-                val dlSec   = vm.downloadSeconds
+            if (vm.assetsReady) {
+                val dlSec    = vm.downloadSeconds
                 val unzipSec = vm.unzipSeconds
                 if (dlSec != null && unzipSec != null) {
                     Text(
-                        text  = "Download %.1fs · Unzip %.1fs".format(dlSec, unzipSec),
+                        text  = "Circuit: Download %.1fs · Unzip %.1fs".format(dlSec, unzipSec),
                         style = MaterialTheme.typography.bodySmall,
                         color = onColor,
                     )
                 } else {
                     Text(
-                        text  = "sha256rsa4096.r1cs",
+                        text  = "sha256rsa4096.r1cs + keys",
                         style = MaterialTheme.typography.bodySmall,
                         color = onColor,
                     )
                 }
             }
 
-            if (!vm.circuitReady && !vm.isDownloading) {
+            if (!vm.assetsReady && !vm.isDownloading) {
                 Button(
                     onClick  = { vm.downloadCircuit() },
                     modifier = Modifier.fillMaxWidth(),
-                ) { Text("Download Circuit") }
+                ) { Text("Download Circuit + Keys") }
             }
         }
     }
@@ -387,23 +388,15 @@ private fun PipelineCard(vm: ProofViewModel, isBusy: Boolean) {
             )
 
             StepButton(
-                label   = "5. Setup Keys",
-                status  = vm.setupStatus,
-                enabled = !isBusy,
-                testTag = "zkidSetupKeysButton",
-                onClick = { vm.runSetupKeys() },
-            )
-
-            StepButton(
-                label   = "6. Generate Proof",
+                label   = "5. Generate Proof",
                 status  = vm.proveStatus,
-                enabled = !isBusy && vm.setupStatus.isSuccess,
+                enabled = !isBusy,
                 testTag = "zkidProveButton",
                 onClick = { vm.runProve() },
             )
 
             StepButton(
-                label   = "7. Verify Proof",
+                label   = "6. Verify Proof",
                 status  = vm.verifyStatus,
                 enabled = !isBusy && vm.proveStatus.isSuccess,
                 testTag = "zkidVerifyButton",
@@ -426,7 +419,7 @@ private fun PipelineCard(vm: ProofViewModel, isBusy: Boolean) {
                     )
                     Spacer(Modifier.width(8.dp))
                 }
-                Text("Run All (Setup → Prove → Verify)")
+                Text("Run All (Prove → Verify)")
             }
 
             // Results inline
@@ -439,7 +432,6 @@ private fun PipelineCard(vm: ProofViewModel, isBusy: Boolean) {
 private fun PipelineResults(vm: ProofViewModel) {
     val steps = listOf(
         "Generate Input" to vm.generateInputStatus,
-        "Setup Keys"     to vm.setupStatus,
         "Generate Proof" to vm.proveStatus,
         "Verify Proof"   to vm.verifyStatus,
     )
