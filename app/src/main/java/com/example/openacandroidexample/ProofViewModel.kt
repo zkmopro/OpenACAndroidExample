@@ -74,7 +74,6 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
     // SP Ticket / MOICA
     var idNum:             String     by mutableStateOf("A123456789")
     var tbs:               String     by mutableStateOf("")
-    var challengeId:       String     by mutableStateOf("")
     var tbsStatus:         StepStatus by mutableStateOf(StepStatus.Idle); private set
     var spTicketStatus:    StepStatus by mutableStateOf(StepStatus.Idle); private set
     var spTicket:          String?    by mutableStateOf(null);             private set
@@ -82,7 +81,6 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
     var athResultStatus:   StepStatus by mutableStateOf(StepStatus.Idle); private set
     var athResponseString: String?    by mutableStateOf(null);             private set
     var athIssuerCert:     String?    by mutableStateOf(null);             private set
-    var nullifier: String by mutableStateOf("72911719481093693208513902246730484145653187491035661799159026261029904622382")
 
     var generateInputStatus: StepStatus by mutableStateOf(StepStatus.Idle); private set
     var generatedInputPath:  String?    by mutableStateOf(null);             private set
@@ -248,7 +246,6 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
                 val challengeBytes = json.optString("challenge_bytes")
                 if (challengeBytes.isEmpty()) throw Exception("challenge_bytes not found in response")
                 tbs         = challengeBytes
-                challengeId = json.optString("challenge_id", "")
                 tbsStatus   = StepStatus.Success("challenge received")
             } catch (e: Exception) {
                 tbsStatus = StepStatus.Failure(e.message ?: "unknown error")
@@ -449,22 +446,13 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
 
         val dp              = documentsPath
         val kd              = keysDir
-        val capturedChallengeId = challengeId
-        val capturedNullifier   = nullifier
         try {
-            var validChain  = false
-            var validDevice = false
             var ccProof     = ByteArray(0)
             var dsProof     = ByteArray(0)
             withContext(Dispatchers.Default) {
-                validChain  = verifyCertChainRs4096(documentsPath = dp)
-                validDevice = verifyDeviceSigRs2048(documentsPath = dp)
                 ccProof = File(kd, "cert_chain_rs4096_proof.bin").readBytes()
                 dsProof = File(kd, "device_sig_rs2048_proof.bin").readBytes()
             }
-
-            if (!validChain)  { verifyStatus = StepStatus.Failure("CertChain proof invalid"); return }
-            if (!validDevice) { verifyStatus = StepStatus.Failure("DeviceSig proof invalid"); return }
 
             var responseCode = 0
             var raw          = ""
@@ -475,11 +463,9 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
                 conn.setRequestProperty("ngrok-skip-browser-warning", "true")
                 conn.doOutput = true
                 val body = JSONObject().apply {
-                    put("challenge_id",     capturedChallengeId)
                     put("cert_chain_type",  "rs4096")
                     put("cert_chain_proof", Base64.encodeToString(ccProof, Base64.NO_WRAP))
                     put("device_sig_proof", Base64.encodeToString(dsProof, Base64.NO_WRAP))
-                    put("nullifier",        capturedNullifier)
                 }
                 conn.outputStream.use { it.write(body.toString().toByteArray()) }
                 responseCode = conn.responseCode
