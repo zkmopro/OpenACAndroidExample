@@ -13,32 +13,41 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
-import uniffi.mopro.generateInputFido
-import uniffi.mopro.proveFido
-import uniffi.mopro.verifyFido
+import uniffi.mopro.generateCertChainRs4096Input
+import uniffi.mopro.proveCertChainRs4096
+import uniffi.mopro.proveDeviceSigRs2048
+import uniffi.mopro.verifyCertChainRs4096
+import uniffi.mopro.verifyDeviceSigRs2048
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.UUID
-import java.util.zip.ZipInputStream
+import java.util.zip.GZIPInputStream
 
-private const val CIRCUIT_ZIP_URL =
-    "https://pub-ef10768896384fdf9617f26d43e11a65.r2.dev/sha256rsa4096.r1cs.zip"
-private const val CIRCUIT_FILENAME = "sha256rsa4096.r1cs"
+private const val CERT_CHAIN_PROVING_KEY_URL =
+    "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_proving.key.gz"
+private const val CERT_CHAIN_VERIFYING_KEY_URL =
+    "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_verifying.key.gz"
+private const val DEVICE_SIG_PROVING_KEY_URL =
+    "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_proving.key.gz"
+private const val DEVICE_SIG_VERIFYING_KEY_URL =
+    "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_verifying.key.gz"
+private const val SMT_SNAPSHOT_URL =
+    "https://github.com/moven0831/moica-revocation-smt/releases/download/snapshot-latest/g3-tree-snapshot.json.gz"
 
-private const val PROVING_KEY_URL =
-    "https://github.com/zkmopro/zkID/releases/latest/download/rs256_4096_proving.key.zip"
-private const val VERIFYING_KEY_URL =
-    "https://github.com/zkmopro/zkID/releases/latest/download/rs256_4096_verifying.key.zip"
-private const val PROVING_KEY_FILENAME  = "rs256_4096_proving.key"
-private const val VERIFYING_KEY_FILENAME = "rs256_4096_verifying.key"
+private const val CERT_CHAIN_PROVING_KEY_NAME  = "cert_chain_rs4096_proving.key"
+private const val CERT_CHAIN_VERIFYING_KEY_NAME = "cert_chain_rs4096_verifying.key"
+private const val DEVICE_SIG_PROVING_KEY_NAME   = "device_sig_rs2048_proving.key"
+private const val DEVICE_SIG_VERIFYING_KEY_NAME  = "device_sig_rs2048_verifying.key"
+private const val SMT_SNAPSHOT_NAME             = "g3-tree-snapshot.json.gz"
+
+private const val SERVER_URL      = "https://435a-211-75-7-191.ngrok-free.app/challenge"
+private const val LINK_VERIFY_URL = "https://435a-211-75-7-191.ngrok-free.app/link-verify"
 
 const val RETURN_SCHEME = "openac"
 const val RETURN_URL    = "$RETURN_SCHEME://callback"
 
 class ProofViewModel(application: Application) : AndroidViewModel(application) {
-
-    // MARK: - Step Status
 
     sealed class StepStatus {
         object Idle    : StepStatus()
@@ -50,60 +59,50 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
         val isRunning: Boolean get() = this is Running
     }
 
-    // MARK: - Pipeline state
+    // Pipeline step states
+    var proveStatus:  StepStatus by mutableStateOf(StepStatus.Idle); private set
+    var verifyStatus: StepStatus by mutableStateOf(StepStatus.Idle); private set
+    var isRunning:    Boolean    by mutableStateOf(false);           private set
 
-    var setupStatus:   StepStatus by mutableStateOf(StepStatus.Idle); private set
-    var proveStatus:   StepStatus by mutableStateOf(StepStatus.Idle); private set
-    var verifyStatus:  StepStatus by mutableStateOf(StepStatus.Idle); private set
-    var isRunning:     Boolean    by mutableStateOf(false);           private set
+    // Circuit download state
+    var circuitReady:     Boolean by mutableStateOf(false); private set
+    var isDownloading:    Boolean by mutableStateOf(false); private set
+    var downloadProgress: Double  by mutableStateOf(0.0);   private set
+    var downloadError:    String? by mutableStateOf(null);  private set
+    var downloadSeconds:  Double? by mutableStateOf(null);  private set
 
-    // MARK: - Circuit download state
+    // SP Ticket / MOICA
+    var idNum:             String     by mutableStateOf("A123456789")
+    var tbs:               String     by mutableStateOf("")
+    var challengeId:       String     by mutableStateOf("")
+    var tbsStatus:         StepStatus by mutableStateOf(StepStatus.Idle); private set
+    var spTicketStatus:    StepStatus by mutableStateOf(StepStatus.Idle); private set
+    var spTicket:          String?    by mutableStateOf(null);             private set
+    var rtnVal:            String?    by mutableStateOf(null);             private set
+    var athResultStatus:   StepStatus by mutableStateOf(StepStatus.Idle); private set
+    var athResponseString: String?    by mutableStateOf(null);             private set
+    var athIssuerCert:     String?    by mutableStateOf(null);             private set
+    var nullifier: String by mutableStateOf("72911719481093693208513902246730484145653187491035661799159026261029904622382")
 
-    var circuitReady:      Boolean  by mutableStateOf(false); private set
-    var isDownloading:     Boolean  by mutableStateOf(false); private set
-    var downloadProgress:  Double   by mutableStateOf(0.0);   private set
-    var downloadPhase:     String?  by mutableStateOf(null);  private set
-    var downloadError:     String?  by mutableStateOf(null);  private set
-    var downloadSeconds:   Double?  by mutableStateOf(null);  private set
-    var unzipSeconds:      Double?  by mutableStateOf(null);  private set
-
-    val assetsReady: Boolean get() = circuitReady && keysReady
-
-    // MARK: - SP Ticket / MOICA
-
-    var idNum:               String     by mutableStateOf("A123456789")
-    var spTicketStatus:      StepStatus by mutableStateOf(StepStatus.Idle); private set
-    var spTicket:            String?    by mutableStateOf(null);             private set
-    var rtnVal:              String?    by mutableStateOf(null);             private set
-    var athResultStatus:     StepStatus by mutableStateOf(StepStatus.Idle); private set
-    var athResponseString:   String?    by mutableStateOf(null);             private set
-    var athIssuerCert:       String?    by mutableStateOf(null);             private set
     var generateInputStatus: StepStatus by mutableStateOf(StepStatus.Idle); private set
-    var fidoInputJson:       String?    by mutableStateOf(null);             private set
+    var generatedInputPath:  String?    by mutableStateOf(null);             private set
+    var inputJson:           String?    by mutableStateOf(null);             private set
 
-    // MARK: - Paths
-
+    // Paths
     private val workDir: File
         get() = File(getApplication<Application>().filesDir, "ZKVectors")
 
     val documentsPath: String get() = workDir.absolutePath
     val keysDir:       File   get() = File(workDir, "keys")
-    val inputPath:     String get() = File(workDir, "input.json").absolutePath
-    val fidoInputPath: String get() = File(workDir, "fido_input.json").absolutePath
-
-    var keysReady: Boolean by mutableStateOf(false); private set
 
     init {
         checkCircuitReady()
-        checkKeysReady()
     }
 
     private fun checkCircuitReady() {
-        circuitReady = File(workDir, CIRCUIT_FILENAME).exists()
-    }
-
-    private fun checkKeysReady() {
-        keysReady = File(keysDir, PROVING_KEY_FILENAME).exists()
+        circuitReady = File(keysDir, CERT_CHAIN_PROVING_KEY_NAME).exists()
+            && File(keysDir, DEVICE_SIG_PROVING_KEY_NAME).exists()
+            && File(workDir, SMT_SNAPSHOT_NAME).exists()
     }
 
     // MARK: - Resource Setup
@@ -112,13 +111,14 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch(Dispatchers.IO) {
             val app = getApplication<Application>()
             workDir.mkdirs()
-            // Always overwrite input.json from assets for a clean slate
+            // Copy input.json for emulator testing
             val inputDst = File(workDir, "input.json")
-            try {
-                inputDst.delete()
-                app.assets.open("input.json")
-                    .use { src -> inputDst.outputStream().use { src.copyTo(it) } }
-            } catch (_: Exception) {}
+            if (!inputDst.exists()) {
+                try {
+                    app.assets.open("input.json")
+                        .use { src -> inputDst.outputStream().use { src.copyTo(it) } }
+                } catch (_: Exception) {}
+            }
             // Copy MOICA-G3.cer from assets if not present
             val certDst = File(workDir, "MOICA-G3.cer")
             if (!certDst.exists()) {
@@ -128,7 +128,6 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
                 } catch (_: Exception) {}
             }
             checkCircuitReady()
-            checkKeysReady()
         }
     }
 
@@ -139,38 +138,57 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             isDownloading    = true
             downloadProgress = 0.0
-            downloadPhase    = null
             downloadError    = null
             downloadSeconds  = null
-            unzipSeconds     = null
+
+            val certKeyExists  = File(keysDir, CERT_CHAIN_PROVING_KEY_NAME).exists()
+            val devKeyExists   = File(keysDir, DEVICE_SIG_PROVING_KEY_NAME).exists()
+            val snapshotExists = File(workDir, SMT_SNAPSHOT_NAME).exists()
+
+            if (certKeyExists && devKeyExists && snapshotExists) {
+                circuitReady  = true
+                isDownloading = false
+                return@launch
+            }
 
             try {
-                // 1. Download circuit
-                val circuitZip = File(getApplication<Application>().cacheDir, "sha256rsa4096.r1cs.zip")
-                val t0 = System.currentTimeMillis()
-                downloadPhase = CIRCUIT_FILENAME
-                downloadWithProgress(CIRCUIT_ZIP_URL, circuitZip) { downloadProgress = it }
-                downloadSeconds = (System.currentTimeMillis() - t0) / 1000.0
-                val t1 = System.currentTimeMillis()
-                unzipFile(circuitZip, workDir)
-                circuitZip.delete()
-                unzipSeconds = (System.currentTimeMillis() - t1) / 1000.0
-                checkCircuitReady()
-
-                // 2. Download proving key
                 keysDir.mkdirs()
-                val provingZip = File(getApplication<Application>().cacheDir, "$PROVING_KEY_FILENAME.zip")
-                downloadPhase    = PROVING_KEY_FILENAME
-                downloadProgress = 0.0
-                downloadWithProgress(PROVING_KEY_URL, provingZip) { downloadProgress = it }
-                unzipFile(provingZip, keysDir)
-                provingZip.delete()
-                checkKeysReady()
+                val t0 = System.currentTimeMillis()
+
+                data class Job(
+                    val url: String,
+                    val name: String,
+                    val dest: File,
+                    val exists: Boolean,
+                    val decompress: Boolean,
+                )
+                val jobs = listOf(
+                    Job(CERT_CHAIN_PROVING_KEY_URL, CERT_CHAIN_PROVING_KEY_NAME, File(keysDir, CERT_CHAIN_PROVING_KEY_NAME), certKeyExists, true),
+                    Job(DEVICE_SIG_PROVING_KEY_URL, DEVICE_SIG_PROVING_KEY_NAME, File(keysDir, DEVICE_SIG_PROVING_KEY_NAME), devKeyExists, true),
+                    Job(SMT_SNAPSHOT_URL,            SMT_SNAPSHOT_NAME,           File(workDir, SMT_SNAPSHOT_NAME),           snapshotExists, false),
+                )
+                val slice = 1.0 / jobs.size
+                for ((i, job) in jobs.withIndex()) {
+                    val base = i * slice
+                    if (job.exists) {
+                        downloadProgress = base + slice
+                        continue
+                    }
+                    if (job.decompress) {
+                        val tmp = File(getApplication<Application>().cacheDir, "${job.name}.gz")
+                        downloadWithProgress(job.url, tmp) { downloadProgress = base + it * slice }
+                        decompressGz(tmp, job.dest)
+                    } else {
+                        downloadWithProgress(job.url, job.dest) { downloadProgress = base + it * slice }
+                    }
+                }
+
+                downloadSeconds = (System.currentTimeMillis() - t0) / 1000.0
+                checkCircuitReady()
             } catch (e: Exception) {
                 downloadError = e.message
             } finally {
                 isDownloading = false
-                downloadPhase = null
             }
         }
     }
@@ -187,7 +205,7 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
             var received = 0L
             conn.inputStream.use { input ->
                 dest.outputStream().use { output ->
-                    val buf = ByteArray(8192)
+                    val buf = ByteArray(65536)
                     var n: Int
                     while (input.read(buf).also { n = it } != -1) {
                         output.write(buf, 0, n)
@@ -201,17 +219,39 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    private suspend fun unzipFile(zip: File, destDir: File) = withContext(Dispatchers.IO) {
-        ZipInputStream(zip.inputStream().buffered()).use { zis ->
-            var entry = zis.nextEntry
-            while (entry != null) {
-                if (!entry.isDirectory) {
-                    val out = File(destDir, entry.name)
-                    out.parentFile?.mkdirs()
-                    out.outputStream().use { zis.copyTo(it) }
+    private suspend fun decompressGz(gzFile: File, dest: File) = withContext(Dispatchers.IO) {
+        if (dest.exists()) dest.delete()
+        GZIPInputStream(gzFile.inputStream().buffered()).use { gis ->
+            dest.outputStream().use { gis.copyTo(it) }
+        }
+        gzFile.delete()
+    }
+
+    // MARK: - TBS Challenge
+
+    fun regenerateTBS() {
+        viewModelScope.launch {
+            tbsStatus = StepStatus.Running
+            try {
+                val raw = withContext(Dispatchers.IO) {
+                    val conn = URL(SERVER_URL).openConnection() as HttpURLConnection
+                    conn.requestMethod = "POST"
+                    conn.setRequestProperty("Content-Type", "application/json")
+                    conn.setRequestProperty("ngrok-skip-browser-warning", "true")
+                    conn.doOutput = true
+                    conn.outputStream.use { it.write("{}".toByteArray()) }
+                    val text = conn.inputStream.bufferedReader().readText()
+                    conn.disconnect()
+                    text
                 }
-                zis.closeEntry()
-                entry = zis.nextEntry
+                val json = JSONObject(raw)
+                val challengeBytes = json.optString("challenge_bytes")
+                if (challengeBytes.isEmpty()) throw Exception("challenge_bytes not found in response")
+                tbs         = challengeBytes
+                challengeId = json.optString("challenge_id", "")
+                tbsStatus   = StepStatus.Success("challenge received")
+            } catch (e: Exception) {
+                tbsStatus = StepStatus.Failure(e.message ?: "unknown error")
             }
         }
     }
@@ -232,7 +272,7 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
                         opMode        = "APP2APP",
                         hint          = "待簽署資料",
                         timeLimit     = "600",
-                        signData      = "ZTc3NWYyODA1ZmI5OTNlMDVhMjA4ZGJmZjE1ZDFjMQ==",
+                        signData      = Base64.encodeToString(tbs.toByteArray(Charsets.UTF_8), Base64.NO_WRAP),
                         signType      = "PKCS#1",
                         hashAlgorithm = "SHA256",
                         tbsEncoding   = "base64",
@@ -298,8 +338,8 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
 
     fun reset() {
         generateInputStatus = StepStatus.Idle
-        fidoInputJson       = null
-        setupStatus         = StepStatus.Idle
+        generatedInputPath  = null
+        inputJson           = null
         proveStatus         = StepStatus.Idle
         verifyStatus        = StepStatus.Idle
     }
@@ -309,10 +349,8 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             isRunning = true
             reset()
-            doSetupKeys()
-            if (!setupStatus.isSuccess)  { isRunning = false; return@launch }
             doProve()
-            if (!proveStatus.isSuccess)  { isRunning = false; return@launch }
+            if (!proveStatus.isSuccess) { isRunning = false; return@launch }
             doVerify()
             isRunning = false
         }
@@ -327,68 +365,61 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
                 generateInputStatus = StepStatus.Failure("Missing ATH result — poll first")
                 return@launch
             }
-            val tbs            = "e775f2805fb993e05a208dbff15d1c1"
-            val outPath        = fidoInputPath
-            val issuerCertPath = File(workDir, "MOICA-G3.cer").absolutePath
+            val tbsCapture      = tbs
+            val outDir          = workDir.absolutePath
+            val issuerCertPath  = File(workDir, "MOICA-G3.cer").absolutePath
+            val smtSnapshotPath = File(workDir, SMT_SNAPSHOT_NAME).absolutePath
             try {
-                withContext(Dispatchers.Default) {
-                    generateInputFido(
-                        certb64        = certb64,
-                        signedResponse = signedResponse,
-                        tbs            = tbs,
-                        issuerCertPath = issuerCertPath,
-                        smtServer      = null,
-                        issuerId       = "g2",
-                        outputPath     = outPath,
+                val resultPath = withContext(Dispatchers.Default) {
+                    generateCertChainRs4096Input(
+                        certb64         = certb64,
+                        signedResponse  = signedResponse,
+                        tbs             = tbsCapture,
+                        issuerCertPath  = issuerCertPath,
+                        smtSnapshotPath = smtSnapshotPath,
+                        outputDir       = outDir,
                     )
                 }
-                val inputJson = File(outPath).readText()
-                fidoInputJson       = inputJson
-                generateInputStatus = StepStatus.Success(outPath)
+                generatedInputPath  = resultPath
+                inputJson           = try { File(resultPath).readText() } catch (_: Exception) { null }
+                generateInputStatus = StepStatus.Success(resultPath)
             } catch (e: Exception) {
                 generateInputStatus = StepStatus.Failure(e.message ?: "unknown error")
             }
         }
     }
 
-    fun runSetupKeys() { viewModelScope.launch { doSetupKeys() } }
-    fun runProve()     { viewModelScope.launch { doProve() } }
-    fun runVerify()    { viewModelScope.launch { doVerify() } }
-
-    private suspend fun doSetupKeys() {
-        if (keysReady) {
-            setupStatus = StepStatus.Success("Keys already downloaded")
-            return
+    fun runProve() {
+        if (isRunning) return
+        viewModelScope.launch {
+            isRunning   = true
+            proveStatus = StepStatus.Idle
+            doProve()
+            isRunning = false
         }
-        setupStatus = StepStatus.Running
-        try {
-            withContext(Dispatchers.IO) {
-                keysDir.mkdirs()
-                for ((url, filename) in listOf(
-                    PROVING_KEY_URL  to PROVING_KEY_FILENAME,
-                    VERIFYING_KEY_URL to VERIFYING_KEY_FILENAME,
-                )) {
-                    val tmpZip = File(getApplication<Application>().cacheDir, "$filename.zip")
-                    downloadWithProgress(url, tmpZip) {}
-                    unzipFile(tmpZip, keysDir)
-                    tmpZip.delete()
-                }
-            }
-            checkKeysReady()
-            setupStatus = StepStatus.Success("Keys downloaded to ${keysDir.absolutePath}")
-        } catch (e: Exception) {
-            setupStatus = StepStatus.Failure(e.message ?: "unknown error")
+    }
+
+    fun runVerify() {
+        if (isRunning) return
+        viewModelScope.launch {
+            isRunning    = true
+            verifyStatus = StepStatus.Idle
+            doVerify()
+            isRunning = false
         }
     }
 
     private suspend fun doProve() {
         proveStatus = StepStatus.Running
-        val dp = documentsPath; val ip = fidoInputPath
+        val dp = documentsPath
         try {
-            val result = withContext(Dispatchers.Default) {
-                proveFido(documentsPath = dp, inputPath = ip)
+            val ms = withContext(Dispatchers.Default) {
+                val t0 = System.currentTimeMillis()
+                proveCertChainRs4096(documentsPath = dp)
+                proveDeviceSigRs2048(documentsPath = dp)
+                System.currentTimeMillis() - t0
             }
-            proveStatus = StepStatus.Success("${result.proveMs} ms · ${result.proofSizeBytes} B")
+            proveStatus = StepStatus.Success("$ms ms")
         } catch (e: Exception) {
             proveStatus = StepStatus.Failure(e.message ?: "unknown error")
         }
@@ -396,23 +427,72 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun doVerify() {
         verifyStatus = StepStatus.Running
-        val dp = documentsPath
-        try {
-            // Download verifying key on demand if not present
-            if (!File(keysDir, VERIFYING_KEY_FILENAME).exists()) {
+
+        // Download verifying keys on demand
+        val verifyingKeys = listOf(
+            CERT_CHAIN_VERIFYING_KEY_NAME  to CERT_CHAIN_VERIFYING_KEY_URL,
+            DEVICE_SIG_VERIFYING_KEY_NAME  to DEVICE_SIG_VERIFYING_KEY_URL,
+        )
+        for ((keyName, remoteUrl) in verifyingKeys) {
+            val dest = File(keysDir, keyName)
+            if (dest.exists()) continue
+            try {
                 keysDir.mkdirs()
-                val tmpZip = File(getApplication<Application>().cacheDir, "$VERIFYING_KEY_FILENAME.zip")
-                withContext(Dispatchers.IO) {
-                    downloadWithProgress(VERIFYING_KEY_URL, tmpZip) {}
-                    unzipFile(tmpZip, keysDir)
-                    tmpZip.delete()
-                }
+                val tmp = File(getApplication<Application>().cacheDir, "$keyName.gz")
+                downloadWithProgress(remoteUrl, tmp) {}
+                decompressGz(tmp, dest)
+            } catch (e: Exception) {
+                verifyStatus = StepStatus.Failure("Failed to download $keyName: ${e.message}")
+                return
             }
-            val valid = withContext(Dispatchers.Default) { verifyFido(documentsPath = dp) }
-            verifyStatus = if (valid)
-                StepStatus.Success("Proof is valid")
-            else
-                StepStatus.Failure("Proof is invalid")
+        }
+
+        val dp              = documentsPath
+        val kd              = keysDir
+        val capturedChallengeId = challengeId
+        val capturedNullifier   = nullifier
+        try {
+            var validChain  = false
+            var validDevice = false
+            var ccProof     = ByteArray(0)
+            var dsProof     = ByteArray(0)
+            withContext(Dispatchers.Default) {
+                validChain  = verifyCertChainRs4096(documentsPath = dp)
+                validDevice = verifyDeviceSigRs2048(documentsPath = dp)
+                ccProof = File(kd, "cert_chain_rs4096_proof.bin").readBytes()
+                dsProof = File(kd, "device_sig_rs2048_proof.bin").readBytes()
+            }
+
+            if (!validChain)  { verifyStatus = StepStatus.Failure("CertChain proof invalid"); return }
+            if (!validDevice) { verifyStatus = StepStatus.Failure("DeviceSig proof invalid"); return }
+
+            var responseCode = 0
+            var raw          = ""
+            withContext(Dispatchers.IO) {
+                val conn = URL(LINK_VERIFY_URL).openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json")
+                conn.setRequestProperty("ngrok-skip-browser-warning", "true")
+                conn.doOutput = true
+                val body = JSONObject().apply {
+                    put("challenge_id",     capturedChallengeId)
+                    put("cert_chain_type",  "rs4096")
+                    put("cert_chain_proof", Base64.encodeToString(ccProof, Base64.NO_WRAP))
+                    put("device_sig_proof", Base64.encodeToString(dsProof, Base64.NO_WRAP))
+                    put("nullifier",        capturedNullifier)
+                }
+                conn.outputStream.use { it.write(body.toString().toByteArray()) }
+                responseCode = conn.responseCode
+                raw = try { conn.inputStream.bufferedReader().readText() }
+                      catch (_: Exception) { conn.errorStream?.bufferedReader()?.readText() ?: "" }
+                conn.disconnect()
+            }
+
+            if (responseCode != 200) {
+                verifyStatus = StepStatus.Failure("link-verify failed ($responseCode): $raw")
+                return
+            }
+            verifyStatus = StepStatus.Success("All proofs valid")
         } catch (e: Exception) {
             verifyStatus = StepStatus.Failure(e.message ?: "unknown error")
         }
