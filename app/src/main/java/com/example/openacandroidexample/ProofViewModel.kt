@@ -16,8 +16,6 @@ import org.json.JSONObject
 import uniffi.mopro.generateCertChainRs4096Input
 import uniffi.mopro.proveCertChainRs4096
 import uniffi.mopro.proveDeviceSigRs2048
-import uniffi.mopro.verifyCertChainRs4096
-import uniffi.mopro.verifyDeviceSigRs2048
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
