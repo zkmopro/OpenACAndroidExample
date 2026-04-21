@@ -6,13 +6,13 @@ An Android example app demonstrating zero-knowledge proof generation and verific
 
 | Download Circuit | FIDO Signature |
 |:---:|:---:|
-| ![Download Circuit](images/openac-android-download.gif) | ![FIDO Signature](images/openac-android-fido.gif) |
-| \~ 19 seconds | \~8 seconds |
+| ![Download Circuit](images/openac-android-download.gif) | ![FIDO Signature](images/openac-android-tw-fido.gif) |
+| \~ 12 seconds | \~10 seconds |
 
 | Generate Proof | Verify Proof |
 |:---:|:---:|
 | ![Generate Proof](images/openac-android-prove.gif) | ![Verify Proof](images/openac-android-verify.gif) |
-| \~ 21 seconds | \~ 20 seconds |
+| \~ 9 seconds | \~ 17 seconds |
 
 ## Overview
 
