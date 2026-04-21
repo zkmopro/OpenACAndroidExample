@@ -73,12 +73,12 @@ fun ZkIdComponent(vm: ProofViewModel = viewModel()) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Text(
-                text  = "FIDO zkID",
+                text  = "OpenAC zkID",
                 style = MaterialTheme.typography.headlineSmall,
                 fontWeight = FontWeight.Bold,
             )
             Text(
-                text  = "RS256 zero-knowledge proof via MOICA",
+                text  = "CertChain RS4096 + DeviceSig RS2048 via MOICA",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -89,17 +89,17 @@ fun ZkIdComponent(vm: ProofViewModel = viewModel()) {
         CircuitDownloadCard(vm = vm)
 
         // ── MOICA Section ────────────────────────────────────────
-        AnimatedVisibility(visible = vm.assetsReady) {
+        AnimatedVisibility(visible = vm.circuitReady) {
             MoicaCard(vm = vm, isBusy = isBusy)
         }
 
-        // ── fido_input.json viewer ───────────────────────────────
-        AnimatedVisibility(visible = vm.fidoInputJson != null) {
-            FidoInputCard(json = vm.fidoInputJson ?: "")
+        // ── Circuit Input JSON viewer ────────────────────────────
+        AnimatedVisibility(visible = vm.inputJson != null) {
+            InputJsonCard(json = vm.inputJson ?: "")
         }
 
         // ── ZK Pipeline ──────────────────────────────────────────
-        AnimatedVisibility(visible = vm.assetsReady) {
+        AnimatedVisibility(visible = vm.circuitReady) {
             PipelineCard(vm = vm, isBusy = isBusy)
         }
 
@@ -118,7 +118,7 @@ private fun CircuitDownloadCard(vm: ProofViewModel) {
         colors = CardDefaults.cardColors(
             containerColor = when {
                 vm.downloadError != null -> MaterialTheme.colorScheme.errorContainer
-                vm.assetsReady          -> MaterialTheme.colorScheme.secondaryContainer
+                vm.circuitReady         -> MaterialTheme.colorScheme.secondaryContainer
                 else                    -> MaterialTheme.colorScheme.surfaceVariant
             }
         ),
@@ -129,13 +129,13 @@ private fun CircuitDownloadCard(vm: ProofViewModel) {
         ) {
             val onColor = when {
                 vm.downloadError != null -> MaterialTheme.colorScheme.onErrorContainer
-                vm.assetsReady          -> MaterialTheme.colorScheme.onSecondaryContainer
+                vm.circuitReady         -> MaterialTheme.colorScheme.onSecondaryContainer
                 else                    -> MaterialTheme.colorScheme.onSurfaceVariant
             }
             Text(
                 text = when {
                     vm.downloadError != null -> "Download failed"
-                    vm.assetsReady          -> "Circuit + Keys ready"
+                    vm.circuitReady         -> "Circuit + Keys ready"
                     vm.isDownloading        -> "Downloading…"
                     else                    -> "Circuit + Keys not downloaded"
                 },
@@ -153,37 +153,35 @@ private fun CircuitDownloadCard(vm: ProofViewModel) {
             }
 
             if (vm.isDownloading) {
-                val phase = vm.downloadPhase ?: "…"
                 LinearProgressIndicator(
-                    progress     = { vm.downloadProgress.toFloat() },
-                    modifier     = Modifier.fillMaxWidth(),
+                    progress = { vm.downloadProgress.toFloat() },
+                    modifier = Modifier.fillMaxWidth(),
                 )
                 Text(
-                    text  = "$phase  ${(vm.downloadProgress * 100).toInt()}%",
+                    text  = "${(vm.downloadProgress * 100).toInt()}%",
                     style = MaterialTheme.typography.bodySmall,
                     color = onColor,
                 )
             }
 
-            if (vm.assetsReady) {
-                val dlSec    = vm.downloadSeconds
-                val unzipSec = vm.unzipSeconds
-                if (dlSec != null && unzipSec != null) {
+            if (vm.circuitReady) {
+                val dlSec = vm.downloadSeconds
+                if (dlSec != null) {
                     Text(
-                        text  = "Circuit: Download %.1fs · Unzip %.1fs".format(dlSec, unzipSec),
+                        text  = "Downloaded in %.1fs".format(dlSec),
                         style = MaterialTheme.typography.bodySmall,
                         color = onColor,
                     )
                 } else {
                     Text(
-                        text  = "sha256rsa4096.r1cs + keys",
+                        text  = "cert_chain_rs4096 + device_sig_rs2048 + g3-smt",
                         style = MaterialTheme.typography.bodySmall,
                         color = onColor,
                     )
                 }
             }
 
-            if (!vm.assetsReady && !vm.isDownloading) {
+            if (!vm.circuitReady && !vm.isDownloading) {
                 Button(
                     onClick  = { vm.downloadCircuit() },
                     modifier = Modifier.fillMaxWidth(),
@@ -194,11 +192,11 @@ private fun CircuitDownloadCard(vm: ProofViewModel) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// fido_input.json Card
+// Circuit Input JSON Card
 // ─────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun FidoInputCard(json: String) {
+private fun InputJsonCard(json: String) {
     val clipboard         = LocalClipboardManager.current
     val hScroll           = rememberScrollState()
     var expanded by remember { mutableStateOf(false) }
@@ -208,14 +206,13 @@ private fun FidoInputCard(json: String) {
             modifier = Modifier.padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            // Header row: title + expand toggle + copy button
             Row(
                 modifier              = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment     = Alignment.CenterVertically,
             ) {
                 Text(
-                    "fido_input.json",
+                    "circuit_input.json",
                     style      = MaterialTheme.typography.labelLarge,
                     color      = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.SemiBold,
@@ -240,7 +237,6 @@ private fun FidoInputCard(json: String) {
                 }
             }
 
-            // JSON content — only visible when expanded
             AnimatedVisibility(visible = expanded) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     HorizontalDivider()
@@ -274,38 +270,46 @@ private fun MoicaCard(vm: ProofViewModel, isBusy: Boolean) {
             )
 
             OutlinedTextField(
-                value               = vm.idNum,
-                onValueChange       = { vm.idNum = it },
-                label               = { Text("ID Number") },
-                singleLine          = true,
-                modifier            = Modifier.fillMaxWidth(),
-                keyboardOptions     = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
+                value                = vm.idNum,
+                onValueChange        = { vm.idNum = it },
+                label                = { Text("ID Number") },
+                singleLine           = true,
+                modifier             = Modifier.fillMaxWidth(),
+                keyboardOptions      = KeyboardOptions(capitalization = KeyboardCapitalization.Characters),
                 visualTransformation = PasswordVisualTransformation(),
-                enabled             = !isBusy,
+                enabled              = !isBusy,
             )
 
             StepButton(
-                label        = "1. Get SP Ticket",
-                status       = vm.spTicketStatus,
-                enabled      = !isBusy,
-                testTag      = "fidoSpTicketButton",
-                onClick      = { vm.computeSPTicket() },
+                label   = "0. Get TBS Challenge",
+                status  = vm.tbsStatus,
+                enabled = !isBusy,
+                testTag = "tbsChallengeButton",
+                onClick = { vm.regenerateTBS() },
             )
 
             StepButton(
-                label        = "2. Open MOICA App",
-                status       = null,
-                enabled      = !isBusy && vm.spTicket != null,
-                testTag      = "fidoOpenMoicaButton",
-                onClick      = { vm.openMOICA() },
+                label   = "1. Get SP Ticket",
+                status  = vm.spTicketStatus,
+                enabled = !isBusy && vm.tbsStatus.isSuccess,
+                testTag = "fidoSpTicketButton",
+                onClick = { vm.computeSPTicket() },
             )
 
             StepButton(
-                label        = "3. Poll ATH Result",
-                status       = vm.athResultStatus,
-                enabled      = !isBusy && vm.spTicket != null,
-                testTag      = "fidoPollAthButton",
-                onClick      = { vm.pollAthResult() },
+                label   = "2. Open MOICA App",
+                status  = null,
+                enabled = !isBusy && vm.spTicket != null,
+                testTag = "fidoOpenMoicaButton",
+                onClick = { vm.openMOICA() },
+            )
+
+            StepButton(
+                label   = "3. Poll ATH Result",
+                status  = vm.athResultStatus,
+                enabled = !isBusy && vm.spTicket != null,
+                testTag = "fidoPollAthButton",
+                onClick = { vm.pollAthResult() },
             )
 
             MoicaResults(vm = vm)
@@ -316,15 +320,15 @@ private fun MoicaCard(vm: ProofViewModel, isBusy: Boolean) {
 @Composable
 private fun MoicaResults(vm: ProofViewModel) {
     val steps = listOf(
-        "SP Ticket"  to vm.spTicketStatus,
-        "ATH Result" to vm.athResultStatus,
+        "TBS Challenge" to vm.tbsStatus,
+        "SP Ticket"     to vm.spTicketStatus,
+        "ATH Result"    to vm.athResultStatus,
     )
     val hasAny = steps.any { (_, s) -> s !is ProofViewModel.StepStatus.Idle }
     AnimatedVisibility(visible = hasAny) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             HorizontalDivider()
 
-            // Step success/failure messages
             steps.forEach { (label, status) ->
                 when (status) {
                     is ProofViewModel.StepStatus.Success ->
@@ -335,13 +339,11 @@ private fun MoicaResults(vm: ProofViewModel) {
                 }
             }
 
-            // rtn_val returned by MOICA after the user signs
             vm.rtnVal?.let { rtnVal ->
                 HorizontalDivider()
                 ResultRow("rtn_val", rtnVal.ifEmpty { "(empty)" }, MaterialTheme.colorScheme.onSurface)
             }
 
-            // Signed response snippet (first 64 chars)
             vm.athResponseString?.let { resp ->
                 ResultRow(
                     "signed_response",
@@ -350,7 +352,6 @@ private fun MoicaResults(vm: ProofViewModel) {
                 )
             }
 
-            // Cert snippet
             vm.athIssuerCert?.let { cert ->
                 ResultRow(
                     "cert",
@@ -422,7 +423,6 @@ private fun PipelineCard(vm: ProofViewModel, isBusy: Boolean) {
                 Text("Run All (Prove → Verify)")
             }
 
-            // Results inline
             PipelineResults(vm = vm)
         }
     }

@@ -51,7 +51,7 @@ dependencies {
     implementation(libs.androidx.ui.tooling.preview)
     implementation(libs.androidx.material3)
     implementation("androidx.compose.material:material-icons-extended")
-    implementation("com.github.zkmopro:OpenACKotlin:500852897d")
+    implementation("com.github.zkmopro:OpenACKotlin:d4e1acd654")
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
