@@ -24,19 +24,13 @@ import java.util.zip.GZIPInputStream
 
 private const val CERT_CHAIN_PROVING_KEY_URL =
     "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_proving.key.gz"
-private const val CERT_CHAIN_VERIFYING_KEY_URL =
-    "https://github.com/zkmopro/zkID/releases/download/latest/cert_chain_rs4096_verifying.key.gz"
 private const val DEVICE_SIG_PROVING_KEY_URL =
     "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_proving.key.gz"
-private const val DEVICE_SIG_VERIFYING_KEY_URL =
-    "https://github.com/zkmopro/zkID/releases/download/latest/device_sig_rs2048_verifying.key.gz"
 private const val SMT_SNAPSHOT_URL =
     "https://github.com/moven0831/moica-revocation-smt/releases/download/snapshot-latest/g3-tree-snapshot.json.gz"
 
 private const val CERT_CHAIN_PROVING_KEY_NAME  = "cert_chain_rs4096_proving.key"
-private const val CERT_CHAIN_VERIFYING_KEY_NAME = "cert_chain_rs4096_verifying.key"
 private const val DEVICE_SIG_PROVING_KEY_NAME   = "device_sig_rs2048_proving.key"
-private const val DEVICE_SIG_VERIFYING_KEY_NAME  = "device_sig_rs2048_verifying.key"
 private const val SMT_SNAPSHOT_NAME             = "g3-tree-snapshot.json.gz"
 
 private const val SERVER_URL      = "https://435a-211-75-7-191.ngrok-free.app/challenge"
@@ -422,25 +416,6 @@ class ProofViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun doVerify() {
         verifyStatus = StepStatus.Running
-
-        // Download verifying keys on demand
-        val verifyingKeys = listOf(
-            CERT_CHAIN_VERIFYING_KEY_NAME  to CERT_CHAIN_VERIFYING_KEY_URL,
-            DEVICE_SIG_VERIFYING_KEY_NAME  to DEVICE_SIG_VERIFYING_KEY_URL,
-        )
-        for ((keyName, remoteUrl) in verifyingKeys) {
-            val dest = File(keysDir, keyName)
-            if (dest.exists()) continue
-            try {
-                keysDir.mkdirs()
-                val tmp = File(getApplication<Application>().cacheDir, "$keyName.gz")
-                downloadWithProgress(remoteUrl, tmp) {}
-                decompressGz(tmp, dest)
-            } catch (e: Exception) {
-                verifyStatus = StepStatus.Failure("Failed to download $keyName: ${e.message}")
-                return
-            }
-        }
 
         val dp              = documentsPath
         val kd              = keysDir
